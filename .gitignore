@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual envs
+.venv/
+venv/
+
+# Datasets (downloaded, not committed)
+data/*
+!data/.gitkeep
+# Keep the specs workflow README, but never commit the specs themselves.
+!data/specs/
+data/specs/*
+!data/specs/README.md
+
+# Local env / secrets
+.env
+
+# OS
+.DS_Store

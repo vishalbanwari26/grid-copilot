@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grid-copilot"
+version = "0.1.0"
+description = "Anomaly detection plus agentic root-cause analysis on industrial/grid telemetry, grounded in equipment documentation and prior-incident memory."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }  # PolyForm Noncommercial 1.0.0 (source-available, noncommercial)
+authors = [{ name = "Vishal Banwari" }]
+keywords = ["anomaly-detection", "root-cause-analysis", "agents", "ics", "ot-security", "rag", "llm"]
+
+# Cortex (the orchestration primitives) is a hard dependency but has no
+# dependencies of its own. Install it editable from the sibling checkout:
+#   pip install -e ../cortex
+# then `pip install -e .` here. Mnemos and the live LLM providers are optional
+# extras, so the offline demo installs almost nothing.
+dependencies = []
+
+[project.optional-dependencies]
+# Real reasoning via a hosted model (Cortex's clients import these lazily).
+live = ["anthropic>=0.40"]
+groq = ["groq>=0.13"]
+# Persistent per-asset incident memory via Mnemos (heavy: DB + embedding stack).
+memory = ["mnemos"]
+# The autoencoder detector (torch). The z-score baseline needs none of this.
+detect = ["torch>=2.0"]
+# The dashboard backend (grid_copilot/server.py).
+web = ["fastapi>=0.115", "uvicorn>=0.30"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+grid-copilot = "grid_copilot.cli:main"
+
+# For uv users, resolve the local sibling checkouts automatically.
+[tool.uv.sources]
+cortex-orchestrator = { path = "../cortex", editable = true }
+mnemos = { path = "../mnemos", editable = true }
+
+[tool.setuptools.packages.find]
+include = ["grid_copilot*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
