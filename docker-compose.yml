@@ -1,0 +1,177 @@
+# Runs Grid Copilot's API alongside a self-hosted Langfuse instance (for LLM
+# observability, see grid_copilot/observability.py) so the whole tracing story
+# is demoable locally with `docker compose up`, no cloud account and no cost.
+#
+# The langfuse-web/langfuse-worker/clickhouse/redis/minio/postgres services
+# below are copied from Langfuse's own reference compose file
+# (https://github.com/langfuse/langfuse/blob/main/docker-compose.yml), which is
+# the officially supported self-hosting stack as of Langfuse v3: a single
+# Postgres+web container is no longer enough on its own. The CHANGEME secrets
+# keep their documented defaults here since this is a local, ephemeral demo
+# stack, not a real deployment; change them before running this anywhere
+# reachable from outside your machine.
+#
+# LANGFUSE_INIT_* on langfuse-web bootstraps a fixed org/project/user and API
+# key pair on first boot, so the api service can start with a known
+# LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY pair rather than requiring a manual
+# sign-in step to mint them.
+#
+# Usage (from inside grid-copilot/, with cortex/ present as a sibling
+# directory, e.g. ~/Documents/GitHub/{cortex,grid-copilot}):
+#   docker compose up
+# then:
+#   curl localhost:8000/health
+#   curl "localhost:8000/api/investigate?fault=bearing_overheat&provider=mock"
+#   open http://localhost:3000   (Langfuse UI: demo@example.com / demo-password-change-me)
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      additional_contexts:
+        cortexsrc: ../cortex
+    ports:
+      - "8000:8000"
+    environment:
+      LANGFUSE_HOST: http://langfuse-web:3000
+      LANGFUSE_PUBLIC_KEY: pk-lf-grid-copilot-demo
+      LANGFUSE_SECRET_KEY: sk-lf-grid-copilot-demo
+    depends_on:
+      langfuse-web:
+        condition: service_started
+
+  langfuse-worker:
+    image: docker.io/langfuse/langfuse-worker:3
+    restart: unless-stopped
+    depends_on: &langfuse-depends-on
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment: &langfuse-worker-env
+      NEXTAUTH_URL: http://localhost:3000
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
+      SALT: mysalt
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      TELEMETRY_ENABLED: "true"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://localhost:9090
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: myredissecret
+
+  langfuse-web:
+    image: docker.io/langfuse/langfuse:3
+    restart: unless-stopped
+    depends_on: *langfuse-depends-on
+    ports:
+      - "3000:3000"
+    environment:
+      <<: *langfuse-worker-env
+      NEXTAUTH_SECRET: mysecret
+      LANGFUSE_INIT_ORG_ID: grid-copilot-org
+      LANGFUSE_INIT_ORG_NAME: Grid Copilot Demo
+      LANGFUSE_INIT_PROJECT_ID: grid-copilot
+      LANGFUSE_INIT_PROJECT_NAME: Grid Copilot
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-grid-copilot-demo
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-grid-copilot-demo
+      LANGFUSE_INIT_USER_EMAIL: demo@example.com
+      LANGFUSE_INIT_USER_NAME: Demo
+      LANGFUSE_INIT_USER_PASSWORD: demo-password-change-me
+
+  clickhouse:
+    image: docker.io/clickhouse/clickhouse-server:25.12
+    restart: unless-stopped
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+    volumes:
+      - langfuse_clickhouse_data:/var/lib/clickhouse
+      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 1s
+
+  minio:
+    image: cgr.dev/chainguard/minio
+    restart: unless-stopped
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniosecret
+    ports:
+      - "9090:9000"
+    volumes:
+      - langfuse_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 1s
+      timeout: 5s
+      retries: 5
+      start_period: 1s
+
+  redis:
+    image: docker.io/redis:7
+    restart: unless-stopped
+    command: >
+      --requirepass myredissecret
+      --maxmemory-policy noeviction
+    volumes:
+      - langfuse_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+
+  postgres:
+    image: docker.io/postgres:17
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      - langfuse_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  langfuse_postgres_data:
+  langfuse_clickhouse_data:
+  langfuse_clickhouse_logs:
+  langfuse_minio_data:
+  langfuse_redis_data:

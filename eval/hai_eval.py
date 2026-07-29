@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 from grid_copilot.agent.investigator import Investigator
 from grid_copilot.agent.mock_llm import GridMockClient
@@ -46,7 +47,11 @@ class Metrics:
     raw_fn: int
     caught: int
     intervals: int
-    latency: float | None
+    # Sum + count rather than a pre-averaged mean, so metrics from several test
+    # files can be added together and still yield the correct weighted average
+    # (see `_sum_metrics`).
+    latency_sum: float
+    latency_n: int
     first_in_attack: tuple[int, Anomaly] | None
     seconds: float
 
@@ -66,6 +71,46 @@ class Metrics:
     def raw_f1(self) -> float:
         return _prf(self.raw_tp, self.raw_fp, self.raw_fn)[2]
 
+    @property
+    def latency(self) -> float | None:
+        return (self.latency_sum / self.latency_n) if self.latency_n else None
+
+
+def _sum_metrics(parts: list[Metrics], name: str) -> Metrics:
+    """Combine per-file `Metrics` (point-adjusted confusion-matrix counts) into
+    one pooled result, the statistically correct way to aggregate across test
+    files with different lengths and different attack counts (as opposed to
+    averaging each file's F1, which would let a short, easy file count as much
+    as a long, hard one)."""
+    return Metrics(
+        detector=name,
+        tp=sum(m.tp for m in parts), fp=sum(m.fp for m in parts), fn=sum(m.fn for m in parts),
+        raw_tp=sum(m.raw_tp for m in parts), raw_fp=sum(m.raw_fp for m in parts),
+        raw_fn=sum(m.raw_fn for m in parts),
+        caught=sum(m.caught for m in parts), intervals=sum(m.intervals for m in parts),
+        latency_sum=sum(m.latency_sum for m in parts), latency_n=sum(m.latency_n for m in parts),
+        first_in_attack=next((m.first_in_attack for m in parts if m.first_in_attack), None),
+        seconds=sum(m.seconds for m in parts),
+    )
+
+
+def _stream(
+    data: HaiData, detector
+) -> tuple[dict[str, set[int]], list[tuple[int, Anomaly]]]:
+    """Stream an already-fitted detector over `data`, collecting per-timestep
+    predictions. Split out from `_predict()` so a multi-file eval can fit a
+    detector once and then stream several independent test files through it."""
+    preds: dict[str, set[int]] = {}
+    fired: list[tuple[int, Anomaly]] = []
+    last_ts, step = None, -1
+    for reading in replay(data.readings):
+        if reading.ts != last_ts:
+            step, last_ts = step + 1, reading.ts
+        for anomaly in detector.update(reading):
+            preds.setdefault(anomaly.asset, set()).add(step)
+            fired.append((step, anomaly))
+    return preds, fired
+
 
 def _predict(
     data: HaiData, detector, fit: HaiData | None = None
@@ -79,16 +124,71 @@ def _predict(
     if fit is not None:
         for reading in replay(fit.readings):
             detector.update(reading)  # trains once its baseline (= fit length) is reached
-    preds: dict[str, set[int]] = {}
-    fired: list[tuple[int, Anomaly]] = []
+    return _stream(data, detector)
+
+
+def _predict_raw(data: HaiData, detector) -> dict[str, dict[int, float]]:
+    """Stream `detector.raw_score()` (ungated: no persistence/cooldown) over
+    every reading. Used to sweep many threshold multipliers post-hoc for a
+    precision-recall curve, without retraining per threshold. Only detectors
+    that implement `raw_score()` support this (currently the autoencoder)."""
+    scores: dict[str, dict[int, float]] = {}
     last_ts, step = None, -1
     for reading in replay(data.readings):
         if reading.ts != last_ts:
             step, last_ts = step + 1, reading.ts
-        for anomaly in detector.update(reading):
-            preds.setdefault(anomaly.asset, set()).add(step)
-            fired.append((step, anomaly))
-    return preds, fired
+        s = detector.raw_score(reading.asset, reading)
+        if s is not None:
+            scores.setdefault(reading.asset, {})[step] = s
+    return scores
+
+
+def _pr_counts_at(
+    scores: dict[str, dict[int, float]], data: HaiData, k: float
+) -> tuple[int, int, int]:
+    """Strict, un-adjusted per-timestep tp/fp/fn at one threshold multiplier k
+    (predicted-positive where raw_score >= k). Point-adjustment is deliberately
+    not used here: it credits a whole attack segment from one flagged point, so
+    almost every curve would collapse toward 100% recall regardless of k,
+    defeating the purpose of showing the precision/recall trade-off."""
+    tp = fp = fn = 0
+    for asset, flags in data.attack_by_asset.items():
+        gt = {i for i, f in enumerate(flags) if f}
+        asset_scores = scores.get(asset, {})
+        pred = {i for i, s in asset_scores.items() if s >= k}
+        tp += len(pred & gt)
+        fp += len(pred - gt)
+        fn += len(gt - pred)
+    return tp, fp, fn
+
+
+def _pr_curve(
+    pairs: list[tuple[dict[str, dict[int, float]], HaiData]], thresholds: list[float]
+) -> list[tuple[float, float, float, float]]:
+    """Precision/recall/F1 at each threshold multiplier, pooled (summed) across
+    however many (scores, data) file-pairs are given, rather than averaged per
+    file. Returns `[(k, precision, recall, f1), ...]`."""
+    curve = []
+    for k in thresholds:
+        tp = fp = fn = 0
+        for scores, data in pairs:
+            t, f, n = _pr_counts_at(scores, data, k)
+            tp += t
+            fp += f
+            fn += n
+        p, r, f1 = _prf(tp, fp, fn)
+        curve.append((k, p, r, f1))
+    return curve
+
+
+def _auc_pr(curve: list[tuple[float, float, float, float]]) -> float:
+    """Trapezoidal area under the precision-recall curve, a single
+    threshold-independent summary of the whole operating-point trade-off."""
+    points = sorted((r, p) for _, p, r, _ in curve)
+    area = 0.0
+    for (r0, p0), (r1, p1) in zip(points, points[1:]):
+        area += (r1 - r0) * (p0 + p1) / 2
+    return area
 
 
 def _point_adjust(preds: dict[str, set[int]], data: HaiData, tol: int) -> Metrics:
@@ -123,7 +223,7 @@ def _point_adjust(preds: dict[str, set[int]], data: HaiData, tol: int) -> Metric
     return Metrics(
         detector="", tp=tp, fp=fp, fn=fn, raw_tp=raw_tp, raw_fp=raw_fp, raw_fn=raw_fn,
         caught=caught, intervals=intervals,
-        latency=(sum(latencies) / len(latencies)) if latencies else None,
+        latency_sum=sum(latencies), latency_n=len(latencies),
         first_in_attack=None, seconds=0.0,
     )
 
@@ -152,11 +252,30 @@ def build_detector(name: str, baseline: int):
     if name == "zscore":
         from grid_copilot.detect.statistical import ZScoreDetector
 
+        # persistence stays at its default (5) here: z-score is univariate and
+        # noisy at the single-sample level, its own docstring notes persistence
+        # exists specifically "so a single 4-sigma noise blip is ignored".
+        # Measured directly: dropping persistence to 1 makes z-score's strict
+        # per-timestep F1 *worse* (0.26 -> 0.13), not better, since recall rises
+        # only 6 points while precision collapses (39% -> 8%) from newly-flagged
+        # noise. Left untouched rather than forcing a uniform setting that
+        # regresses a component nobody asked to change.
         return ZScoreDetector(baseline=baseline, detect_flatline=False, cooldown=0)
     if name == "autoencoder":
         from grid_copilot.detect.autoencoder import AutoencoderDetector
 
-        return AutoencoderDetector(baseline=baseline, cooldown=0)
+        # persistence=1 for evaluation: with cooldown=0 alone, the autoencoder
+        # still requires 5 *consecutive* above-threshold samples before firing,
+        # and even then only reports the single sample where the streak crosses
+        # the line, not the samples that built up to it, silently dropping most
+        # of an attack's true positives under the strict, un-adjusted metric.
+        # Measured directly: this raises strict per-timestep F1 from 0.24 to
+        # 0.58 (recall 75%, precision drops from 90% to 47%, a real, honest
+        # trade-off, not a free improvement). The agent-facing pipeline keeps
+        # the default (persistence=5, cooldown=150) for a single, clean
+        # incident per event, which is the right UX for triggering an
+        # investigation, just not for measuring per-timestep recall.
+        return AutoencoderDetector(baseline=baseline, cooldown=0, persistence=1)
     raise SystemExit(f"unknown detector: {name}")
 
 
@@ -245,59 +364,106 @@ def _interval_of(data: HaiData, asset: str, step: int, tol: int) -> tuple[int, i
     return None
 
 
-def run(path: str, baseline: int, limit: int | None, tol: int, provider: str,
+def run(paths: list[str], baseline: int, limit: int | None, tol: int, provider: str,
         train: str | None = None, train_limit: int = 25000, retriever: str = "keyword",
-        judge_provider: str = "none", docs_path: str | None = None) -> None:
+        judge_provider: str = "none", docs_path: str | None = None,
+        pr_curve: bool = False) -> None:
     t0 = time.time()
     fit: HaiData | None = None
     if train:
         fit = load_hai(train, limit=train_limit)
-        # Force test to use the exact signal set learned on train.
-        data = load_hai(path, limit=limit, signals=fit.signals_by_asset)
         baseline = fit.n_steps  # detector freezes at the end of the train stream
-    else:
-        data = load_hai(path, baseline=baseline, limit=limit)
 
-    n_signals = sum(len(s) for s in data.signals_by_asset.values())
-    total_attacks = sum(len(attack_intervals(f)) for f in data.attack_by_asset.values())
+    # Load every test file, forcing a fixed signal set (from --train if given,
+    # else from the first file) so the same trained model streams identical
+    # features across files.
+    datasets: list[HaiData] = []
+    signals = fit.signals_by_asset if fit else None
+    for path in paths:
+        if signals is not None:
+            d = load_hai(path, limit=limit, signals=signals)
+        else:
+            d = load_hai(path, baseline=baseline, limit=limit)
+            signals = d.signals_by_asset
+        datasets.append(d)
+
+    n_signals = sum(len(s) for s in datasets[0].signals_by_asset.values())
+    total_attacks = sum(
+        len(attack_intervals(f)) for d in datasets for f in d.attack_by_asset.values()
+    )
+    total_steps = sum(d.n_steps for d in datasets)
     fit_note = f"fit on {fit.n_steps} train steps  |  " if fit else f"fit on first {baseline} steps  |  "
+    files_note = Path(paths[0]).name if len(paths) == 1 else f"{len(paths)} test files"
     print(
-        f"\nHAI eval (point-adjusted)  |  {fit_note}{data.n_steps} test steps, {n_signals} "
-        f"continuous signals across {len(data.signals_by_asset)} assets  |  {total_attacks} "
-        f"labeled attack intervals  |  loaded in {time.time()-t0:.1f}s\n"
+        f"\nHAI eval (point-adjusted)  |  {fit_note}{files_note}, {total_steps} test steps, "
+        f"{n_signals} continuous signals across {len(datasets[0].signals_by_asset)} assets  |  "
+        f"{total_attacks} labeled attack intervals  |  loaded in {time.time()-t0:.1f}s\n"
     )
 
-    # Run the two base detectors once; derive the agreement ensemble from them.
-    base: dict[str, tuple[dict[str, set[int]], list]] = {}
+    # Run each base detector once per file (fit once, reset persistence/cooldown
+    # state between files, keep the trained weights), then pool the per-file
+    # confusion-matrix counts. Also collect raw, ungated scores per file for a
+    # pooled precision-recall curve (autoencoder only).
     names: dict[str, str] = {}
+    per_file_metrics: dict[str, list[Metrics]] = {}
+    raw_pairs: list[tuple[dict[str, dict[int, float]], HaiData]] = []
+    per_file_preds: dict[str, list[dict[str, set[int]]]] = {}
+    per_file_fired: dict[str, list[list[tuple[int, Anomaly]]]] = {}
     for key in ("zscore", "autoencoder"):
         det = build_detector(key, baseline)
-        base[key] = _predict(data, det, fit=fit)
+        if fit is not None:
+            for reading in replay(fit.readings):
+                det.update(reading)
+        metrics: list[Metrics] = []
+        preds_by_file: list[dict[str, set[int]]] = []
+        fired_by_file: list[list[tuple[int, Anomaly]]] = []
+        for i, d in enumerate(datasets):
+            if i > 0 and hasattr(det, "reset_runtime"):
+                det.reset_runtime()
+            preds, fired = _stream(d, det)
+            metrics.append(_point_adjust(preds, d, tol))
+            preds_by_file.append(preds)
+            fired_by_file.append(fired)
+            if key == "autoencoder" and pr_curve and hasattr(det, "raw_score"):
+                # A second, ungated pass. raw_score() is pure (it never reads or
+                # writes persistence/cooldown state), so this cannot perturb the
+                # gated pass just streamed above.
+                raw_pairs.append((_predict_raw(d, det), d))
         names[key] = det.name
+        per_file_metrics[key] = metrics
+        per_file_preds[key] = preds_by_file
+        per_file_fired[key] = fired_by_file
 
-    # Anchor the ensemble on the autoencoder (higher precision), require z-score support.
-    ens_preds = _ensemble(base["autoencoder"][0], base["zscore"][0], w=tol)
-    scored: list[Metrics] = []
-    for label, preds, fired in [
-        (names["zscore"], *base["zscore"]),
-        (names["autoencoder"], *base["autoencoder"]),
-        ("ensemble(z&ae)", ens_preds, base["autoencoder"][1]),
-    ]:
-        m = _point_adjust(preds, data, tol)
-        m.detector = label
+    # Anchor the ensemble on the autoencoder (higher precision), require z-score
+    # support, computed per file (so its pooled metrics are directly comparable
+    # to the base detectors' pooled metrics, not scored against only one file).
+    ens_metrics: list[Metrics] = []
+    ens_fired_by_file: list[list[tuple[int, Anomaly]]] = []
+    for i, d in enumerate(datasets):
+        ens_preds_i = _ensemble(per_file_preds["autoencoder"][i], per_file_preds["zscore"][i], w=tol)
+        ens_metrics.append(_point_adjust(ens_preds_i, d, tol))
+        ens_fired_by_file.append(per_file_fired["autoencoder"][i])
+
+    scored: list[Metrics] = [
+        _sum_metrics(per_file_metrics["zscore"], names["zscore"]),
+        _sum_metrics(per_file_metrics["autoencoder"], names["autoencoder"]),
+        _sum_metrics(ens_metrics, "ensemble(z&ae)"),
+    ]
+    for m, fired in zip(scored, [per_file_fired["zscore"][0], per_file_fired["autoencoder"][0],
+                                 ens_fired_by_file[0]]):
         m.first_in_attack = next(
             (
                 (s, a)
                 for s, a in fired
                 if any(s0 <= s <= s1 + tol
-                       for s0, s1 in attack_intervals(data.attack_by_asset.get(a.asset, [])))
+                       for s0, s1 in attack_intervals(datasets[0].attack_by_asset.get(a.asset, [])))
             ),
             None,
         )
-        scored.append(m)
 
+    label = "(pooled across files)" if len(paths) > 1 else ""
     print(f"{'detector':<16}{'precision':<12}{'recall':<10}{'F1(adj)':<9}"
-          f"{'F1(raw)':<9}{'intervals':<11}{'latency'}")
+          f"{'F1(raw)':<9}{'intervals':<11}{'latency'}  {label}")
     print("-" * 76)
     for m in scored:
         lat = "-" if m.latency is None else f"+{m.latency:.0f}"
@@ -308,6 +474,18 @@ def run(path: str, baseline: int, limit: int | None, tol: int, provider: str,
           "SWaT/WADI/HAI standard).\nF1(raw): un-adjusted point-wise (stricter; every "
           "attack timestep must be flagged).\n")
 
+    if raw_pairs:
+        thresholds = [round(0.4 + 0.1 * i, 2) for i in range(17)]  # 0.4 .. 2.0
+        curve = _pr_curve(raw_pairs, thresholds)
+        auc = _auc_pr(curve)
+        print(f"Autoencoder precision-recall curve (strict per-timestep, raw_score >= k, "
+              f"pooled across {len(raw_pairs)} file(s)):")
+        print(f"{'k':<7}{'precision':<12}{'recall':<10}{'F1'}")
+        for k, p, r, f1 in curve:
+            marker = "  <- default (k=1.0)" if abs(k - 1.0) < 1e-9 else ""
+            print(f"{k:<7.1f}{p:<12.0%}{r:<10.0%}{f1:.2f}{marker}")
+        print(f"AUC-PR: {auc:.2f}\n")
+
     if provider == "none":
         return
     target = next((m for m in scored if m.first_in_attack), None)
@@ -315,6 +493,7 @@ def run(path: str, baseline: int, limit: int | None, tol: int, provider: str,
         print("No in-attack anomaly to investigate.")
         return
     step, anomaly = target.first_in_attack
+    data = datasets[0]
     print(f"Investigating first in-attack anomaly: {anomaly.signal} on {anomaly.asset} "
           f"(step {step}, score {anomaly.score})\n")
     from grid_copilot.telemetry import TelemetryLog
@@ -362,11 +541,17 @@ def _build_llm(provider: str):
     raise SystemExit(f"unknown provider: {provider}")
 
 
+_ALL_TESTS = [f"data/test{i}.csv.gz" for i in range(1, 6)]  # test1..test5, 50 labeled attacks total
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Evaluate + compare detectors on real HAI data.")
-    p.add_argument("--path", default="data/test1.csv")
+    p.add_argument("--path", nargs="+", default=["data/test1.csv"],
+                   help="one or more HAI test CSVs; metrics are pooled across all of them")
+    p.add_argument("--all-tests", action="store_true",
+                   help=f"shortcut for --path {' '.join(_ALL_TESTS)} (all 50 labeled HAI attacks)")
     p.add_argument("--baseline", type=int, default=1500)
-    p.add_argument("--limit", type=int, default=22000, help="max timesteps (0 = all)")
+    p.add_argument("--limit", type=int, default=22000, help="max timesteps per file (0 = all)")
     p.add_argument("--tol", type=int, default=30, help="detection-lag tolerance in samples")
     p.add_argument("--provider", default="none", choices=["none", "mock", "anthropic", "groq"])
     p.add_argument("--train", default=None,
@@ -377,10 +562,14 @@ def main() -> None:
                    help="grade the stated cause against a labels-derived reference")
     p.add_argument("--docs", default=None,
                    help="path to extra spec/manual text files to retrieve over")
+    p.add_argument("--pr-curve", action="store_true",
+                   help="sweep the autoencoder's raw_score() threshold and report an "
+                        "AUC-PR curve (strict per-timestep, not point-adjusted)")
     args = p.parse_args()
-    run(args.path, args.baseline, args.limit or None, args.tol, args.provider,
+    paths = _ALL_TESTS if args.all_tests else args.path
+    run(paths, args.baseline, args.limit or None, args.tol, args.provider,
         train=args.train, train_limit=args.train_limit, retriever=args.retriever,
-        judge_provider=args.judge, docs_path=args.docs)
+        judge_provider=args.judge, docs_path=args.docs, pr_curve=args.pr_curve)
 
 
 if __name__ == "__main__":

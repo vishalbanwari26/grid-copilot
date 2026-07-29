@@ -26,6 +26,7 @@ from grid_copilot.detect.statistical import ZScoreDetector
 from grid_copilot.events import Event, EventBus
 from grid_copilot.ingest.replay import replay
 from grid_copilot.ingest.synthetic import FAULTS, SyntheticGrid
+from grid_copilot.observability import LangfuseObservedClient, LangfuseEventListener, build_tracer
 from grid_copilot.telemetry import TelemetryLog
 from grid_copilot.types import Anomaly, IncidentReport
 
@@ -94,6 +95,13 @@ def _report_json(report: IncidentReport, truth: str | None) -> dict:
     }
 
 
+@app.get("/health")
+def health() -> dict:
+    """Liveness/readiness probe target. Unconditional: no live-provider or
+    network check inside it, so a probe cannot flap on an unrelated outage."""
+    return {"status": "ok"}
+
+
 @app.get("/api/faults")
 def faults() -> list[dict]:
     return [{"name": k, **v} for k, v in FAULT_META.items()]
@@ -127,17 +135,20 @@ def telemetry(fault: str = "bearing_overheat") -> dict:
 
 def _build_llm(provider: str):
     if provider == "mock":
-        return GridMockClient()
-    from grid_copilot.config import load_env
+        llm = GridMockClient()
+    else:
+        from grid_copilot.config import load_env
 
-    load_env()
-    if provider == "groq":
-        from cortex.llm.groq_client import GroqClient
+        load_env()
+        if provider == "groq":
+            from cortex.llm.groq_client import GroqClient
 
-        return GroqClient()
-    from cortex.llm.anthropic_client import AnthropicClient
+            llm = GroqClient()
+        else:
+            from cortex.llm.anthropic_client import AnthropicClient
 
-    return AnthropicClient()
+            llm = AnthropicClient()
+    return LangfuseObservedClient(llm)
 
 
 async def _investigate_events(fault: str, provider: str, pace: float):
@@ -159,6 +170,7 @@ async def _investigate_events(fault: str, provider: str, pace: float):
 
     bus = EventBus()
     bus.subscribe(listener)
+    bus.subscribe(LangfuseEventListener(build_tracer()))
     investigator = Investigator(
         _build_llm(provider), bus=bus,
         telemetry=TelemetryLog.from_readings(scenario.readings),

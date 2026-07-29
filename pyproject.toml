@@ -29,6 +29,10 @@ memory = ["mnemos"]
 detect = ["torch>=2.0"]
 # The dashboard backend (grid_copilot/server.py).
 web = ["fastapi>=0.115", "uvicorn>=0.30"]
+# LLM observability/tracing (grid_copilot/observability.py). Pinned to the v2
+# API (trace/span/generation); lazily imported, only when LANGFUSE_PUBLIC_KEY
+# and LANGFUSE_SECRET_KEY are set.
+observability = ["langfuse>=2.0,<3.0"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]

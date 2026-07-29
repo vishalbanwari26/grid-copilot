@@ -31,8 +31,10 @@ from eval.judge import LLMJudge
 from grid_copilot.agent.investigator import Investigator
 from grid_copilot.agent.mock_llm import GridMockClient
 from grid_copilot.detect.statistical import ZScoreDetector
+from grid_copilot.events import EventBus
 from grid_copilot.ingest.replay import replay
 from grid_copilot.ingest.synthetic import SyntheticGrid
+from grid_copilot.observability import LangfuseEventListener, LangfuseObservedClient, build_tracer, observed_session
 from grid_copilot.telemetry import TelemetryLog
 from grid_copilot.types import Anomaly
 
@@ -69,6 +71,8 @@ def _first_anomaly(scenario) -> Anomaly | None:
 def run(provider: str = "mock", judge_provider: str = "mock") -> list[Result]:
     llm = _build_llm(provider)
     judge = LLMJudge(_build_llm(judge_provider))
+    tracer = build_tracer()
+    session_id = f"eval-{provider}-vs-{judge_provider}"
     results: list[Result] = []
     for fault, s0, s1, key in SCENARIOS:
         scenario = SyntheticGrid(seed=11).generate(samples=420, inject=[(fault, s0, s1)])
@@ -84,9 +88,12 @@ def run(provider: str = "mock", judge_provider: str = "mock") -> list[Result]:
         t0 = scenario.readings[0].ts
         at_idx = int((anomaly.ts - t0).total_seconds())
 
-        report = Investigator(
-            llm, telemetry=TelemetryLog.from_readings(scenario.readings)
-        ).investigate(anomaly)
+        bus = EventBus()
+        bus.subscribe(LangfuseEventListener(tracer))
+        with observed_session(session_id, tags=["eval", fault]):
+            report = Investigator(
+                llm, bus=bus, telemetry=TelemetryLog.from_readings(scenario.readings)
+            ).investigate(anomaly)
         cause = report.hypothesis.root_cause
         verdict = judge.score(
             context=f"{anomaly.signal} on {anomaly.asset}",
@@ -111,19 +118,22 @@ def run(provider: str = "mock", judge_provider: str = "mock") -> list[Result]:
 
 def _build_llm(provider: str):
     if provider == "mock":
-        return GridMockClient()
-    from grid_copilot.config import load_env
+        llm = GridMockClient()
+    else:
+        from grid_copilot.config import load_env
 
-    load_env()
-    if provider == "anthropic":
-        from cortex.llm.anthropic_client import AnthropicClient
+        load_env()
+        if provider == "anthropic":
+            from cortex.llm.anthropic_client import AnthropicClient
 
-        return AnthropicClient()
-    if provider == "groq":
-        from cortex.llm.groq_client import GroqClient
+            llm = AnthropicClient()
+        elif provider == "groq":
+            from cortex.llm.groq_client import GroqClient
 
-        return GroqClient()
-    raise SystemExit(f"unknown provider: {provider}")
+            llm = GroqClient()
+        else:
+            raise SystemExit(f"unknown provider: {provider}")
+    return LangfuseObservedClient(llm)
 
 
 def _report(results: list[Result], provider: str, judge_provider: str, elapsed: float) -> None:

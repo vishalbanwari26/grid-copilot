@@ -1,0 +1,9 @@
+# Non-secret configuration for the API deployment. Real Langfuse/provider keys
+# live in a Secret (see secret.example.yaml), never here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grid-copilot-config
+  namespace: grid-copilot
+data:
+  LANGFUSE_HOST: "http://langfuse-web.grid-copilot.svc.cluster.local:3000"

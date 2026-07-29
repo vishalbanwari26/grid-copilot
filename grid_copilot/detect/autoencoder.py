@@ -132,16 +132,23 @@ class AutoencoderDetector:
 
     # -- scoring ------------------------------------------------------------
 
-    def _score(self, asset: str, reading: Reading) -> list[Anomaly]:
+    def _reconstruction_error(self, asset: str, reading: Reading) -> tuple[float, float, str] | None:
+        """Pure, side-effect-free forward pass: (error, threshold, trigger signal).
+
+        Shared by `_score()` (the persistence/cooldown-gated path that decides
+        whether to fire an Anomaly for the live agent) and `raw_score()` (the
+        ungated path used to sweep thresholds for a precision-recall curve).
+        Returns None if this asset is not trained or the reading is missing a
+        required signal.
+        """
         import torch
 
-        m = self._model[asset]
+        m = self._model.get(asset)
+        if m is None:
+            return None
         order, mean, std = m["order"], m["mean"], m["std"]
         if any(s not in reading.values for s in order):
-            return []
-
-        if self._cooldown_left[asset] > 0:
-            self._cooldown_left[asset] -= 1
+            return None
 
         x = torch.tensor(
             [[(reading.values[s] - mean[i]) / std[i] for i, s in enumerate(order)]],
@@ -151,7 +158,46 @@ class AutoencoderDetector:
             recon = m["net"](x)
         per_feat = ((recon - x) ** 2)[0]
         err = float(per_feat.mean())
-        threshold = m["threshold"]
+        trigger = order[int(per_feat.argmax())]
+        return err, m["threshold"], trigger
+
+    def raw_score(self, asset: str, reading: Reading) -> float | None:
+        """Continuous anomaly score for one reading, with no persistence or
+        cooldown gating: `reconstruction_error / threshold`, so 1.0 sits
+        exactly at the detector's own decision boundary. Returns None if the
+        asset is not yet trained or the reading is missing a required signal.
+
+        Used to build a precision-recall curve across many threshold
+        multipliers post-hoc, without retraining the model per threshold, and
+        without perturbing `update()`'s own persistence/cooldown state (this
+        method never touches `_streak`/`_cooldown_left`).
+        """
+        result = self._reconstruction_error(asset, reading)
+        if result is None:
+            return None
+        err, threshold, _trigger = result
+        return err / threshold
+
+    def reset_runtime(self) -> None:
+        """Clear persistence/cooldown/window state, keep trained weights.
+
+        For evaluating multiple independent HAI test files against one
+        already-fitted model: without this, a streak or cooldown left over
+        from the tail of one file would bleed into the start of the next
+        unrelated file.
+        """
+        self._streak.clear()
+        self._cooldown_left.clear()
+        self._recent.clear()
+
+    def _score(self, asset: str, reading: Reading) -> list[Anomaly]:
+        result = self._reconstruction_error(asset, reading)
+        if result is None:
+            return []
+        err, threshold, trigger = result
+
+        if self._cooldown_left[asset] > 0:
+            self._cooldown_left[asset] -= 1
 
         if err > threshold:
             self._streak[asset] += 1
@@ -159,7 +205,6 @@ class AutoencoderDetector:
             self._streak[asset] = 0
 
         if self._streak[asset] >= self.persistence and self._cooldown_left[asset] == 0:
-            trigger = order[int(per_feat.argmax())]
             self._cooldown_left[asset] = self.cooldown
             self._streak[asset] = 0
             return [

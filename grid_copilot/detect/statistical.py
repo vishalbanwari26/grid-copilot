@@ -118,6 +118,18 @@ class ZScoreDetector:
 
         return anomalies
 
+    def reset_runtime(self) -> None:
+        """Clear persistence/cooldown/recent-value state, keep the frozen baseline.
+
+        For evaluating multiple independent HAI test files against one already-
+        fitted baseline: without this, a streak or cooldown left over from the
+        tail of one file would bleed into the start of the next unrelated file.
+        """
+        self._streak.clear()
+        self._cooldown_left.clear()
+        self._recent_vals.clear()
+        self._recent_reads.clear()
+
     def _flatlined(self, asset: str, signal: str) -> bool:
         """True if this signal's recent variance collapsed while a sibling moves."""
         key = (asset, signal)

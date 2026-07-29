@@ -83,24 +83,87 @@ pushes one signal out of step reconstructs badly. **(b) The correct protocol:
 fit on HAI's dedicated attack-free train file, not on a short prefix of the test
 file**, so legitimate operating modes are represented in "normal."
 
-| detector          | precision | recall | F1 (point-adjusted) |
-|-------------------|-----------|--------|---------------------|
-| z-score baseline  | 39%       | 100%   | 0.57                |
-| autoencoder       | 90%       | 100%   | 0.95                |
+| detector          | precision | recall | F1 (point-adjusted) | F1 (strict, per-timestep) |
+|-------------------|-----------|--------|-----------------------|----------------------------|
+| z-score baseline  | 39%       | 100%   | 0.57                  | 0.26                       |
+| autoencoder       | 54%       | 100%   | 0.70                  | 0.58                       |
 
-The autoencoder reaches 90% precision at full interval recall, catching all five
-attacks with about a 23-sample detection latency.
+The autoencoder catches all five attacks at meaningfully higher precision than
+the z-score baseline, with about a 19-sample detection latency.
 
-**A caveat, stated up front, because it matters.** Point-adjusted F1 is generous:
-it credits a whole attack segment when any single point in it is detected. Under
-a stricter un-adjusted, per-timestep metric, both detectors score much lower
-(F1 around 0.24 to 0.26) and the autoencoder is not clearly ahead. What the
-autoencoder actually buys is *event-level* quality: it detects each attack early
-and with very few false alarms, but it does not label every individual attack
-timestep. For a system that fires one agent investigation per attack event, that
-event-level precision is the operationally relevant property, which is why the
-point-adjusted view is the right lens here, but the strict number is reported
-too so the headline is not oversold.
+**A caveat, stated up front, because it matters.** Point-adjusted F1 is
+generous: it credits a whole attack segment when any single point in it is
+detected. Under a stricter un-adjusted, per-timestep metric, both detectors
+originally scored much lower (F1 around 0.24 to 0.26), and investigating why
+turned up a real, fixable cause rather than an inherent limit: both detectors'
+`persistence` guard requires 5 *consecutive* above-threshold samples before
+firing, and even then only reports the single sample that crosses the line,
+not the ones that built up to it, silently dropping most of an attack's true
+positives under the strict metric.
+
+Relaxing `persistence` to 1 for evaluation (agent-facing use keeps the
+default, a debounced "one clean incident per event" is the right UX for
+triggering an investigation) was tested on both detectors, with different,
+honest results. For the **autoencoder**, strict F1 rose from 0.24 to 0.58, a
+real improvement, paid for with lower point-adjusted precision (90% -> 54%),
+since more borderline reconstruction-error samples now fire. For **z-score**,
+the same change made strict F1 *worse* (0.26 -> 0.13): z-score is univariate
+and noisy at the single-sample level, and its own docstring notes persistence
+exists specifically "so a single 4-sigma noise blip is ignored", a guard the
+autoencoder's cleaner reconstruction-error signal needs far less. Only the
+autoencoder's evaluation configuration was changed
+(`eval/hai_eval.py::build_detector`); z-score's is untouched, and the table
+above reports what was actually measured for each, not a uniform setting
+picked to flatter the comparison.
+
+**A precision-recall curve, not just one operating point.** The table above is
+one operating point: the autoencoder's evaluation configuration (`persistence=1`,
+`cooldown=0`) fires whenever `reconstruction_error / threshold >= 1.0`. Sweeping
+that multiplier (via a new `raw_score()` method that scores every reading without
+persistence or cooldown gating, so it never disturbs the live detector's own
+state) turns one point into a curve, on the same strict per-timestep metric used
+above:
+
+| k (threshold multiplier) | precision | recall | F1 |
+|---|---|---|---|
+| 0.4 | 4% | 86% | 0.07 |
+| 1.0 (the default above) | 47% | 75% | 0.58 |
+| 1.5 | 64% | 73% | 0.68 |
+| 2.0 | 87% | 66% | 0.75 |
+
+AUC-PR: 0.08. The curve says the default is not the ceiling: tightening the
+threshold trades a third of the recall for a further ~40 points of precision.
+Which point is "right" is a product decision (how many false alarms a
+maintenance lead will tolerate per caught attack), which is exactly why the eval
+reports the curve instead of picking one number to headline.
+
+**The other 113 labeled attack-process intervals.** Every number above is HAI
+test1 only, five labeled attacks. HAI's `hai-21.03` release ships five test
+files, test1 through test5, with considerably more attacks between them.
+Running the same protocol (fit once on `train1.csv.gz`, stream each test file
+in full with the detector's persistence/cooldown state reset between files,
+then pool the confusion-matrix counts, not average each file's F1) across all
+five uncapped files (402,005 timesteps total) gives:
+
+| detector | recall | caught |
+|---|---|---|
+| z-score baseline | 90% | 108/118 |
+| autoencoder | 87% | 97/118 |
+| ensemble(z&ae) | 87% | 97/118 |
+
+(118, not 50, because this counts labeled attack segments per affected process,
+consistent with how the detector and the point-adjustment score per asset
+throughout; an attack that hits two processes at once counts twice. It is a
+different, larger unit than HAI's own per-scenario attack count, not a
+different dataset.)
+
+Recall holds up well across the larger, more diverse attack set (87-90%,
+versus 100% on test1 alone). The autoencoder and z-score baseline are both
+still fit on only `train1`'s 25,000 attack-free steps, one recording session
+of the testbed, while test2 through test5 are separate recording sessions; a
+broader or pooled training set spanning more than one session is the natural
+next lever for tightening detection further, now that the eval covers more
+than a single test file.
 
 **2. A moving-average detector silently hides slow faults.** An earlier version
 used a rolling window. It adapted its mean to a slow ramp (a bearing heating over
@@ -218,14 +281,20 @@ fault, is the difference between a demo and a system.
 
 Both the failures and the fix were only visible because the faults were labeled
 and scored. The eval said the univariate baseline was noisy (point-adjusted F1
-0.57); moving to a multivariate autoencoder trained with the correct protocol
-took that to 0.95 at full recall, and the same eval kept the claim honest by also
-reporting the stricter per-timestep number where the gap narrows. For anyone
-building agentic diagnostics on OT telemetry: invest in the eval harness first,
-report the strict metric next to the generous one, model correlations rather than
-single signals, train "normal" on data that actually represents it, and ground
-the agent in real equipment documentation before trusting a confident narrative.
+0.57 on test1); moving to a multivariate autoencoder trained with the correct
+protocol took that to 0.70 at full recall, and the same eval kept the claim
+honest by also reporting the stricter per-timestep number where the gap
+narrows, the full precision-recall curve behind that one operating point, and
+recall across all 118 labeled attack-process intervals in HAI's five test
+files instead of just test1's five, not only the single, friendlier file. For
+anyone building agentic diagnostics on OT telemetry: invest in the eval
+harness first, report the strict metric and the full curve next to the
+generous single-point number, evaluate against more than one test file before
+trusting a headline result, model correlations rather than single signals,
+train "normal" on data that actually represents it, and ground the agent in
+real equipment documentation before trusting a confident narrative.
 
 Code and reproduction: `eval/harness.py` (synthetic) and `eval/hai_eval.py`
-(HAI, with `--train data/train1.csv.gz` for the train/test protocol) produce
-every number above.
+(HAI; `--train data/train1.csv.gz` for the train/test protocol, `--pr-curve`
+for the threshold sweep, `--all-tests --limit 0` to pool all five real test
+files uncapped) produce every number above.

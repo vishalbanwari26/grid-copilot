@@ -19,6 +19,7 @@ from grid_copilot.detect.statistical import ZScoreDetector
 from grid_copilot.events import Event, EventBus, RCAEvent
 from grid_copilot.ingest.replay import replay
 from grid_copilot.ingest.synthetic import demo_scenario
+from grid_copilot.observability import LangfuseEventListener, LangfuseObservedClient, build_tracer
 
 _ICON = {
     RCAEvent.ANOMALY_DETECTED: "[!]",
@@ -39,19 +40,22 @@ def _print_event(event: Event) -> None:
 
 def build_llm(provider: str):
     if provider == "mock":
-        return GridMockClient()
-    from grid_copilot.config import load_env
+        llm = GridMockClient()
+    else:
+        from grid_copilot.config import load_env
 
-    load_env()  # pick up ANTHROPIC_API_KEY / GROQ_API_KEY from a local .env
-    if provider == "anthropic":
-        from cortex.llm.anthropic_client import AnthropicClient
+        load_env()  # pick up ANTHROPIC_API_KEY / GROQ_API_KEY from a local .env
+        if provider == "anthropic":
+            from cortex.llm.anthropic_client import AnthropicClient
 
-        return AnthropicClient()
-    if provider == "groq":
-        from cortex.llm.groq_client import GroqClient
+            llm = AnthropicClient()
+        elif provider == "groq":
+            from cortex.llm.groq_client import GroqClient
 
-        return GroqClient()
-    raise SystemExit(f"unknown provider: {provider}")
+            llm = GroqClient()
+        else:
+            raise SystemExit(f"unknown provider: {provider}")
+    return LangfuseObservedClient(llm)
 
 
 def build_store(memory: str):
@@ -112,6 +116,7 @@ def main() -> None:
 
     bus = EventBus()
     bus.subscribe(_print_event)
+    bus.subscribe(LangfuseEventListener(build_tracer()))
     investigator = Investigator(
         build_llm(args.provider), retriever=build_retriever(args.retriever, args.docs),
         store=build_store(args.memory), bus=bus, max_rounds=args.max_rounds,
