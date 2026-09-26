@@ -1,10 +1,35 @@
-import { useState } from "react";
-import FleetApp from "./FleetApp";
+import { useEffect, useState } from "react";
+import TwinApp from "./TwinApp";
 import OtDemo from "./OtDemo";
+import DecisionLogPanel from "./components/fleet/DecisionLogPanel";
+import { getDecisions, type DecisionLog } from "./fleetApi";
+
+function DecisionsView() {
+  const [log, setLog] = useState<DecisionLog | null>(null);
+  useEffect(() => {
+    getDecisions().then(setLog);
+  }, []);
+  return <DecisionLogPanel log={log} />;
+}
+
+const SUBTITLE: Record<string, string> = {
+  twin: "Digital twin of a transformer fleet: condition, lifecycle, and alarm investigations a named engineer signs off",
+  decisions: "Every decision, who made it and why, in a tamper-evident log",
+  ot: "Anomaly detection + agentic root-cause analysis on grid / OT telemetry",
+};
 
 export default function App() {
   const params = new URLSearchParams(window.location.search);
-  const [view, setView] = useState(params.get("view") === "ot" ? "ot" : "fleet");
+  const initial = params.get("view") ?? "twin";
+  const [view, setView] = useState(initial in SUBTITLE ? initial : "twin");
+  const pick = (v: string) => {
+    setView(v);
+    const p = new URLSearchParams(window.location.search);
+    if (v === "twin") p.delete("view");
+    else p.set("view", v);
+    const q = p.toString();
+    window.history.replaceState(null, "", q ? `?${q}` : window.location.pathname);
+  };
   return (
     <div className="app">
       <header className="header">
@@ -16,23 +41,24 @@ export default function App() {
           </div>
           <div>
             <h1>Grid Copilot</h1>
-            <p>
-              {view === "fleet"
-                ? "Transformer fleet: condition, risk, and alarm investigations a named engineer signs off"
-                : "Anomaly detection + agentic root-cause analysis on grid / OT telemetry"}
-            </p>
+            <p>{SUBTITLE[view]}</p>
           </div>
         </div>
         <div className="fault-tabs">
-          <button className={`fault-tab${view === "fleet" ? " active" : ""}`} onClick={() => setView("fleet")}>
-            Transformer fleet
-          </button>
-          <button className={`fault-tab${view === "ot" ? " active" : ""}`} onClick={() => setView("ot")}>
-            OT anomaly demo
-          </button>
+          {[
+            ["twin", "Grid twin"],
+            ["decisions", "Decision log"],
+            ["ot", "OT anomaly demo"],
+          ].map(([k, label]) => (
+            <button key={k} className={`fault-tab${view === k ? " active" : ""}`} onClick={() => pick(k)}>
+              {label}
+            </button>
+          ))}
         </div>
       </header>
-      {view === "fleet" ? <FleetApp /> : <OtDemo />}
+      {view === "twin" && <TwinApp />}
+      {view === "decisions" && <DecisionsView />}
+      {view === "ot" && <OtDemo />}
     </div>
   );
 }

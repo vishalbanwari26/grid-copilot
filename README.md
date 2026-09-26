@@ -22,7 +22,7 @@ can be investigated by the agent. The investigation ends in a **proposal**, and
 nothing is acted on until a named engineer accepts it, overrides it with a
 reason, or defers it.
 
-![Transformer fleet: nine transformers ranked by risk with health index, weakest subsystem, first alarm, data-quality grade and decision status](assets/fleet.png)
+![Grid twin: a fictional regional network with five substations coloured by the worst transformer's health, badges for alarms awaiting a decision, and fleet KPIs](assets/twin-grid.png)
 
 Three ideas shape it.
 
@@ -52,6 +52,34 @@ Signals carry their IEC 61850 logical-node class (SIML, YLTC, SPDC, STMP, CCGR)
 and CIM class, and a decision exports as a document shaped like an Asset
 Administration Shell submodel. The mapping is at logical-node level and the
 export is not validated against the AAS metamodel.
+
+### The digital twin: grid, substation, transformer, component
+
+The fleet sits inside an asset model with a dashboard at every level, and each
+level links to the next.
+
+- **Grid:** a schematic of a fictional regional network (five substations and
+  the 110 kV lines between them) coloured by the worst transformer's health,
+  with alarms awaiting a decision, fleet KPIs, and the risk ranking.
+- **Substation:** a single-line diagram (busbars, transformers, feeders) and a
+  card per transformer with load, top oil, health, alarm and decision.
+- **Transformer:** lifecycle (age against design life, insulation life used,
+  tap-changer operations since the last service and when service is due), the
+  component and sensor tree, condition by subsystem, maintenance and decision
+  history, trends, and the alarm investigation with the review form.
+- **Component or sensor:** its own signals with their data-quality grades and
+  IEC 61850 logical node; for the tap changer its recent operations and service
+  status; for a sensor its calibration dates.
+
+Every node has a stable id, and condition flows up the tree: sensors carry
+their data-quality grade, components their condition, transformers their health
+index, substations and the grid their worst and average. A signed decision
+changes the twin: when an engineer confirms a sensor fault, that sensor is
+marked untrusted from then on, which the automatic checks alone could not do for
+a smooth drift. The network, sites, positions, lifecycle history and service
+dates are invented; positions are schematic, not geographic.
+
+![Transformer dashboard: health index, age, insulation life used, tap-changer service date and data grade; the component and sensor tree with IEC 61850 logical nodes and grades; condition by subsystem and lifecycle](assets/twin-transformer.png)
 
 ### What the evaluation found
 

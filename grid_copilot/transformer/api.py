@@ -222,3 +222,47 @@ def submodel(decision_id: str) -> dict:
         if r.decision_id == decision_id:
             return decision_submodel(r.__dict__)
     raise HTTPException(404, "unknown decision")
+
+
+# --- digital twin ---------------------------------------------------------------
+
+twin_router = APIRouter(prefix="/api/twin")
+_HEALTH_CACHE: dict = {}
+
+
+def _twin():
+    from grid_copilot.transformer.twin import Twin
+
+    # Health only depends on the (fixed) simulated data, so it is shared across
+    # requests; decisions are read fresh every time.
+    return Twin(scenario(), DECISIONS, _HEALTH_CACHE)
+
+
+@twin_router.get("/grid")
+def twin_grid() -> dict:
+    return _twin().grid()
+
+
+@twin_router.get("/substation/{sid}")
+def twin_substation(sid: str) -> dict:
+    try:
+        return _twin().substation(sid)
+    except KeyError as exc:
+        raise HTTPException(404, f"unknown substation {sid}") from exc
+
+
+@twin_router.get("/transformer/{asset}")
+def twin_transformer(asset: str) -> dict:
+    if asset not in scenario().fleet.assets:
+        raise HTTPException(404, f"unknown transformer {asset}")
+    return _twin().transformer(asset)
+
+
+@twin_router.get("/component/{asset}/{cid}")
+def twin_component(asset: str, cid: str) -> dict:
+    if asset not in scenario().fleet.assets:
+        raise HTTPException(404, f"unknown transformer {asset}")
+    try:
+        return _twin().component(asset, cid)
+    except KeyError as exc:
+        raise HTTPException(404, f"unknown component {cid}") from exc

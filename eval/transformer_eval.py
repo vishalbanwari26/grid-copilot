@@ -154,6 +154,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--provider", default="mock", choices=["mock", "groq", "anthropic"])
     ap.add_argument("--seeds", type=int, default=3)
+    ap.add_argument("--first-seed", type=int, default=0,
+                    help="skip seeds below this, e.g. to split a live run over two days")
     ap.add_argument("--kinds", nargs="*", default=list(FAULTS) + ["none"])
     ap.add_argument("--out", default=None)
     ap.add_argument("--retry-errors", default=None,
@@ -169,7 +171,8 @@ def main() -> None:
         args.provider = prev["provider"]
         args.out = args.out or args.retry_errors
     else:
-        res = run(args.provider, args.seeds, args.kinds)
+        only = {(k, s) for k in args.kinds for s in range(args.first_seed, args.seeds)} if args.first_seed else None
+        res = run(args.provider, args.seeds, args.kinds, only=only)
     s = res["summary"]
     print(f"\n{s['alarmed']} of {s['scenarios']} scenarios raised an alarm ({res['load']} load). "
           f"Monitoring misses: {', '.join(s['monitoring_misses']) or 'none'}.")

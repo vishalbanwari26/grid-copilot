@@ -321,3 +321,60 @@ def test_a_conclusion_without_its_supporting_tool_goes_back_to_the_tools():
     assert "Either call a tool" in prompts[1]
     assert report.hypothesis.details["evidence_used"] == ["thermal_check"]
     assert "validation" not in report.hypothesis.details
+
+
+# --- digital twin -----------------------------------------------------------------
+
+from grid_copilot.transformer.twin import COMPONENTS, SENSORS, SUBSTATIONS, Twin  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def twin_fleet():
+    return F.build(prefer_real=False)
+
+
+def test_twin_hierarchy_covers_every_transformer_once(twin_fleet):
+    twin = Twin(twin_fleet)
+    grid = twin.grid()
+    placed = [t for s in grid["substations"] for t in s["transformers"]]
+    assert sorted(placed) == sorted(twin_fleet.fleet.assets)
+    assert {s["id"] for s in grid["substations"]} == set(SUBSTATIONS)
+    assert all(a in SUBSTATIONS and b in SUBSTATIONS for a, b in ((line["a"], line["b"]) for line in grid["lines"]))
+    t = twin.transformer("TR-04")
+    assert {c["id"] for c in t["components"]} == set(COMPONENTS)
+    assert {s["id"] for s in t["sensors"]} == set(SENSORS)
+    assert t["mrid"] == twin.transformer("TR-04")["mrid"]  # stable ids
+
+
+def test_lifecycle_is_consistent(twin_fleet):
+    twin = Twin(twin_fleet)
+    for asset in twin_fleet.fleet.assets:
+        lc = twin.lifecycle(asset)
+        assert 0 < lc["insulation_life_used_pct"] < 100
+        assert lc["oltc_ops_since_service"] >= 0
+        assert lc["oltc_service_overdue"] == (lc["oltc_service_due"] <= twin.now.date().isoformat())
+
+
+def test_a_signed_sensor_fault_marks_the_sensor_untrusted(twin_fleet, tmp_path):
+    log = DecisionLog(tmp_path / "d.jsonl")
+    twin = Twin(twin_fleet, log)
+    assert next(s for s in twin.sensors("TR-09") if s["id"] == "dga_monitor")["grade"] == "trusted"
+    report = investigate_alarm(twin_fleet, "TR-09", TransformerMockClient())
+    proposal = Proposal.from_report(report, twin_fleet.first_alarm("TR-09").code, "mock")
+    assert proposal.fault_class == "sensor_fault"
+    log.record(proposal, "A. Engineer", "accept", reason="lab disagrees")
+    sensor = next(s for s in twin.sensors("TR-09") if s["id"] == "dga_monitor")
+    assert sensor["grade"] == "untrusted" and "A. Engineer" in sensor["reasons"][0]
+    assert twin.transformer_summary("TR-09")["data_trust"] == "untrusted"
+
+
+def test_component_views_and_unknown_ids(twin_fleet):
+    twin = Twin(twin_fleet)
+    oltc = twin.component("TR-02", "oltc")
+    assert oltc["kind"] == "component" and oltc["recent_operations"]
+    sensor = twin.component("TR-02", "top_oil_pt100")
+    assert sensor["kind"] == "sensor" and "top_oil_c" in sensor["series"]
+    with pytest.raises(KeyError):
+        twin.component("TR-02", "flux_capacitor")
+    with pytest.raises(KeyError):
+        twin.substation("Atlantis")

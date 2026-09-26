@@ -29,10 +29,12 @@ from grid_copilot.ingest.synthetic import FAULTS, SyntheticGrid
 from grid_copilot.observability import LangfuseObservedClient, LangfuseEventListener, build_tracer
 from grid_copilot.telemetry import TelemetryLog
 from grid_copilot.transformer.api import router as transformer_router
+from grid_copilot.transformer.api import twin_router
 from grid_copilot.types import Anomaly, IncidentReport
 
 app = FastAPI(title="Grid Copilot")
 app.include_router(transformer_router)
+app.include_router(twin_router)
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )

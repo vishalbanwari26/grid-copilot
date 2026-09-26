@@ -336,40 +336,27 @@ def retrieve_notes(arg: str, inv: Investigation) -> Evidence:
     hits = inv.retriever.search(query, k=2)
     if not hits:
         return Evidence("retrieve_docs", f"No notes matched '{query}'.")
-    text = " ".join(f"[{d.id}] {d.title}: {d.text}" for d, _ in hits)
+    top = hits[0][0]
+    text = f"[{top.id}] {top.title}: {top.text}"
+    if len(hits) > 1:
+        other = hits[1][0]
+        text += f" Also relevant: [{other.id}] {other.title}."
     return Evidence("retrieve_docs", text, citations=[d.id for d, _ in hits])
 
 
 def transformer_registry() -> ToolRegistry:
     reg = ToolRegistry()
-    reg.register(Tool("data_quality",
-                      "Data-quality grades (trusted, suspect, untrusted) for the monitoring channels: frozen "
-                      "values, impossible physics, sudden steps, communication gaps. Runs first automatically.",
-                      data_quality))
-    reg.register(Tool("query_events",
-                      "List alarms, tap changes, fan starts and other events on this transformer before the "
-                      "investigation. Argument: number of days to look back (default 14).", query_events))
-    reg.register(Tool("dga_diagnose",
-                      "Dissolved gas analysis: latest gases, the increase since baseline, Duval triangle 1 and "
-                      "IEC ratios on that increase, CO2/CO, 14-day trends, and whether gas rises with tap "
-                      "changes. No argument.", dga_diagnose))
-    reg.register(Tool("thermal_check",
-                      "Thermal model check: load, hot spot, ageing, and measured top oil against a healthy-"
-                      "cooling model with the fans on and off, and the worst 6-hour stretch. No argument.", thermal_check))
-    reg.register(Tool("oltc_check",
-                      "Tap-changer check: operating time, motor current, incomplete operations, and the "
-                      "compartment-to-main-tank temperature difference. No argument.", oltc_check))
-    reg.register(Tool("pd_analyze",
-                      "Partial discharge: level, how often it is active, time of day, the phase-resolved "
-                      "pattern (phase-locked or not) and the hydrogen trend. No argument.", pd_analyze))
-    reg.register(Tool("lab_sample",
-                      "Send an oil sample to the laboratory (the reference for the online DGA monitor) and "
-                      "compare it with the online readings. Costs a site visit; use it when the online gas "
-                      "data is in doubt or the decision is expensive. No argument.", lab_sample))
-    reg.register(Tool("retrieve_docs",
-                      "Search condition-monitoring notes. Argument: a short query (e.g. 'acetylene tap "
-                      "changer leak').", retrieve_notes))
-    reg.register(Tool("recall_incident",
-                      "Recall earlier incidents and maintenance on this transformer. Argument: a short query.",
-                      recall_incident))
+    for name, desc, fn in [
+        ("data_quality", "trusted/suspect/untrusted grade per channel (runs first)", data_quality),
+        ("query_events", "alarms, tap changes, fan starts; arg: days back (default 14)", query_events),
+        ("dga_diagnose", "gas increase since baseline, Duval, IEC ratios, CO2/CO, C2H2/H2, gas vs tap changes",
+         dga_diagnose),
+        ("lab_sample", "laboratory oil analysis vs the online monitor (costs a site visit)", lab_sample),
+        ("thermal_check", "load, hot spot, ageing, top oil vs healthy-cooling model", thermal_check),
+        ("oltc_check", "tap-change time, motor current, compartment vs main-tank temperature", oltc_check),
+        ("pd_analyze", "PD level, phase-resolved pattern, time of day, hydrogen trend", pd_analyze),
+        ("retrieve_docs", "condition-monitoring notes; arg: short query", retrieve_notes),
+        ("recall_incident", "reviewed decisions and maintenance on this unit; arg: short query", recall_incident),
+    ]:
+        reg.register(Tool(name, desc, fn))
     return reg
