@@ -37,6 +37,7 @@ class Investigation:
     window_before: int = 180  # samples before detection (for a pre-onset baseline)
     window_after: int = 180  # samples after detection (to see the developed incident)
     evidence: list[Evidence] = field(default_factory=list)
+    context: object | None = None  # domain data for domain-specific tools (e.g. a transformer's record)
 
     def used_tools(self) -> list[str]:
         return [e.source for e in self.evidence]

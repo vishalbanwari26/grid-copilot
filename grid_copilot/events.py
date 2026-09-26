@@ -25,6 +25,7 @@ class RCAEvent(str, Enum):
     TOOL_CALLED = "tool_called"
     TOOL_RESULT = "tool_result"
     HYPOTHESIS = "hypothesis"
+    VALIDATION = "validation"  # a conclusion failed a check and was sent back
     CRITIQUE = "critique"
     REPORT_READY = "report_ready"
     ABORTED = "aborted"

@@ -5,6 +5,7 @@ const MAP: Record<string, { cls: string; icon: string; kind: string }> = {
   tool_called: { cls: "tool", icon: "→", kind: "Tool call" },
   tool_result: { cls: "result", icon: "·", kind: "Evidence" },
   hypothesis: { cls: "hypothesis", icon: "=", kind: "Hypothesis" },
+  validation: { cls: "anomaly", icon: "!", kind: "Validation check failed, sent back" },
   critique: { cls: "", icon: "?", kind: "Critic review" },
   report_ready: { cls: "report", icon: "✓", kind: "Report ready" },
   aborted: { cls: "", icon: "×", kind: "Aborted" },

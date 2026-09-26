@@ -59,6 +59,9 @@ class Hypothesis:
     root_cause: str
     confidence: float
     reasoning: str
+    # Domain-specific structured fields (e.g. fault_class, urgency, recommended
+    # action). Empty for the generic domain.
+    details: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -89,6 +92,8 @@ class IncidentReport:
             f"- **Root cause (hypothesis):** {self.hypothesis.root_cause}",
             f"- **Confidence:** {self.hypothesis.confidence:.0%}",
             f"- **Critic verdict:** {self.verdict}",
+            *[f"- **{k.replace('_', ' ').capitalize()}:** {v}" for k, v in self.hypothesis.details.items()
+              if isinstance(v, (str, int, float))],
             "",
             "## Reasoning",
             self.hypothesis.reasoning,

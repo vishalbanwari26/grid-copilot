@@ -11,7 +11,85 @@ rebuild, on inspectable data, of the kind of anomaly-detection and root-cause
 work that is otherwise stuck behind a confidentiality clause. Nothing in this
 repository is derived from any employer's data or code.
 
-## Demo
+## Transformer fleet: condition, risk, and decisions a person signs
+
+The dashboard now opens on a fleet of oil-immersed power transformers. Each unit
+has online DGA, top-oil temperature, partial discharge sensing and an on-load tap
+changer (OLTC). The fleet is simulated hour by hour on **real load profiles from
+the public ETT dataset**, with faults injected so every answer is known. The
+monitoring raises alarms, a health index ranks the fleet by risk, and an alarm
+can be investigated by the agent. The investigation ends in a **proposal**, and
+nothing is acted on until a named engineer accepts it, overrides it with a
+reason, or defers it.
+
+![Transformer fleet: nine transformers ranked by risk with health index, weakest subsystem, first alarm, data-quality grade and decision status](assets/fleet.png)
+
+Three ideas shape it.
+
+**Models are the easy part; the tools do the arithmetic.** Duval triangle 1,
+the IEC ratio method, the loading-guide thermal model, tap-changer and PD
+pattern checks are deterministic functions. The model decides which to run,
+weighs them against each other, and explains. A validator checks every
+conclusion before anyone sees it: the fault class and subsystem must agree, the
+cited tools must have run and must include the one that class needs (no cooling
+failure without the thermal check), and it must state what observation would
+prove it wrong. A conclusion that fails goes back to the model, which can fetch
+the missing evidence or correct itself.
+
+**The data can be wrong, not only the transformer.** Every investigation starts
+with data-quality grades per channel (frozen values, impossible physics, sudden
+steps, gaps), and calculated signals inherit the worst grade of their inputs: a
+frozen top-oil sensor makes the hot spot and the tap-changer temperature
+difference untrusted too. Two scenarios are pure data faults (a frozen top-oil
+sensor, a drifting hydrogen cell), and the right answer there is "sensor fault",
+not a diagnosis. The agent can order a lab sample, the reference for online DGA.
+
+**A person is accountable for the decision.** Decisions are appended to a
+hash-chained log with the reviewer, the reason, the evidence, the data-quality
+grades, and the model and prompt versions. Only reviewed decisions become an
+asset's history: the agent never recalls its own unreviewed guesses as fact.
+Signals carry their IEC 61850 logical-node class (SIML, YLTC, SPDC, STMP, CCGR)
+and CIM class, and a decision exports as a document shaped like an Asset
+Administration Shell submodel. The mapping is at logical-node level and the
+export is not validated against the AAS metamodel.
+
+### What the evaluation found
+
+- **The textbook traps are real.** Three faults are built so that a single
+  method gives the wrong answer. Oil leaking from the OLTC compartment into the
+  main tank looks like internal arcing to the Duval triangle; the giveaway is an
+  acetylene-rich increase that rises with tap changes. External interference
+  looks like partial discharge to a PD alarm; the giveaway is a pattern that is
+  not phase-locked and no hydrogen. A drifting gas cell looks like a fault;
+  the lab disagrees. On 39 simulated scenarios, one-method-per-alarm rules get
+  66%; rules with the cross-checks written in get 100% (they were written
+  knowing the catalogue, so treat that as a ceiling).
+- **On real labelled DGA data, Duval triangle 1 is right 51% of the time**
+  (1,581 fault cases; 84% at the level of PD vs discharge vs thermal). The IEC
+  ratio method is right 34% and leaves 36% unclassified. On 740 healthy cases
+  the triangle still names a fault zone for 738, which is why the tools only
+  classify a gas *increase* above a floor. Real PD cases land mostly in T1: the
+  triangle ignores hydrogen, the main PD gas.
+- **The public ETT benchmark has frozen data.** A non-zero load value in ETTh2
+  repeats unchanged for 1,025 hours (43 days); oil temperature, the benchmark's
+  target, repeats to three decimals for 24 to 26 hours. The quality checks flag
+  these, and one demo transformer inherits a frozen stretch from its real load.
+- **Live model, partial run** (`openai/gpt-oss-120b` on Groq, 17 alarmed
+  scenarios before the free-tier daily token limit): 15 of 17 correct, against
+  14 of 17 for the textbook rules. Both misses were instructive: the model once
+  resolved a failed subsystem check by changing the subsystem instead of the
+  class, and once claimed a cooling failure without running the thermal check.
+  The validator now requires the supporting tool per class and sends the model
+  back to its tools; the full live rerun is pending.
+
+```bash
+python -m eval.transformer_eval --provider mock      # textbook vs expert rules vs agent
+python -m eval.transformer_eval --provider groq --seeds 2
+python -m eval.dga_real_eval                         # needs data/dga/data.xlsx
+python -m eval.ett_quality                           # needs data/ett/ETTh1.csv, ETTh2.csv
+```
+
+## OT anomaly demo
 
 A live run on Groq's `gpt-oss-120b`: the detector flags a bearing-temperature
 anomaly on `turbine_1`, and the agent investigates it, writing its own tool
@@ -424,6 +502,21 @@ Honest status, because the difference matters:
   evaluation covers more than one test file.
 
 ## Data
+
+The transformer fleet uses two public datasets, downloaded by you and never
+committed:
+
+- **ETT** ([zhouhaoyi/ETDataset](https://github.com/zhouhaoyi/ETDataset), CC
+  BY-ND 4.0): real hourly load of two transformers, used unmodified as load
+  profiles. `mkdir -p data/ett && curl -L -o data/ett/ETTh1.csv
+  https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTh1.csv`
+  (same for ETTh2). Without it the simulator falls back to a synthetic profile.
+- **Labelled DGA cases**
+  ([alan-456/transformer-fault-dataset](https://github.com/alan-456/transformer-fault-dataset),
+  compiled from published sources including the IEC TC10 cases, no licence
+  stated): used only to score the Duval and IEC tools.
+
+The fleet, its substations and its maintenance history are invented.
 
 The synthetic generator models a small power domain (a steam turbine, a pump, a
 grid bus) so the project runs with no download. The real dataset, wired via
