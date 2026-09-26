@@ -11,7 +11,9 @@ export default function DecisionLogPanel({ log }: { log: DecisionLog | null }) {
           </span>
         )}
       </div>
-      {!log || log.records.length === 0 ? (
+      {!log ? (
+        <div className="tl-empty">Loading the decision log…</div>
+      ) : log.records.length === 0 ? (
         <div className="tl-empty">No decisions yet. Proposals only become asset history once someone decides on them.</div>
       ) : (
         <div className="table-wrap">

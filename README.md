@@ -22,7 +22,40 @@ can be investigated by the agent. The investigation ends in a **proposal**, and
 nothing is acted on until a named engineer accepts it, overrides it with a
 reason, or defers it.
 
-![Grid twin: a fictional regional network with five substations coloured by the worst transformer's health, badges for alarms awaiting a decision, and fleet KPIs](assets/twin-grid.png)
+### Demo
+
+**Walk the twin: grid, substation, transformer, component.**
+![Twin tour: from the grid map into substation Altmühl, its single-line diagram, transformer TR-04 with lifecycle and asset tree, its trends, then the cooling component, and back to the grid](assets/demo/twin-tour.gif)
+
+**Investigate an alarm and decide.** An acetylene alarm on TR-02 looks like
+internal arcing to the Duval triangle. The investigation finds gas that is rich
+in acetylene against hydrogen and rises with tap changes, and proposes an OLTC
+compartment leak with what would prove it wrong. A named engineer accepts it with
+a note, the decision is chained into the log, and it exports as an AAS-shaped
+record.
+![Investigation of the acetylene alarm on TR-02: the agent's steps stream in, the proposal appears with urgency, validation and critic status, the engineer signs it, and it appears in the decision log](assets/demo/investigate-and-decide.gif)
+
+**When the data is wrong, not the transformer.** TR-09's hydrogen alarm comes from
+a drifting DGA cell. Every automatic data check passes. The investigation
+concludes a sensor fault, the engineer signs it, and from then on the twin marks
+that sensor untrusted.
+![Sensor fault on TR-09: the DGA monitor starts as trusted, the investigation proposes a sensor fault, the engineer confirms it, and the monitor turns untrusted in the asset tree, with the decision in the history](assets/demo/sensor-fault.gif)
+
+Full-resolution videos: [twin tour](assets/demo/twin-tour.mp4),
+[investigate and decide](assets/demo/investigate-and-decide.mp4),
+[sensor fault](assets/demo/sensor-fault.mp4). The clips use the offline
+rule-based brain so they run without an API key; the live model runs the same
+flow. Recorded with [scripts/record_demo.js](scripts/record_demo.js).
+
+| | |
+| --- | --- |
+| ![Grid dashboard](assets/demo/01-grid.png) | ![Substation dashboard](assets/demo/02-substation.png) |
+| Grid: network map, KPIs, risk ranking | Substation: single-line diagram, unit cards |
+| ![Transformer dashboard](assets/demo/03-transformer.png) | ![Transformer trends](assets/demo/04-transformer-trends.png) |
+| Transformer: lifecycle, asset tree, condition | Transformer: trends, Duval triangle, PRPD, events |
+| ![Tap changer](assets/demo/05-component-oltc.png) | ![Untrusted sensor](assets/demo/06-sensor-untrusted.png) |
+| Component: tap changer operations and service | Sensor: a frozen real load feed, graded untrusted |
+
 
 Three ideas shape it.
 
@@ -78,8 +111,6 @@ changes the twin: when an engineer confirms a sensor fault, that sensor is
 marked untrusted from then on, which the automatic checks alone could not do for
 a smooth drift. The network, sites, positions, lifecycle history and service
 dates are invented; positions are schematic, not geographic.
-
-![Transformer dashboard: health index, age, insulation life used, tap-changer service date and data grade; the component and sensor tree with IEC 61850 logical nodes and grades; condition by subsystem and lifecycle](assets/twin-transformer.png)
 
 ### What the evaluation found
 

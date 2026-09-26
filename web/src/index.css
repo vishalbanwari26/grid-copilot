@@ -221,7 +221,7 @@ body {
 .crumbs button { background: none; border: 0; color: var(--accent); cursor: pointer; font-size: 13px; padding: 2px 4px; }
 .crumbs button:hover { text-decoration: underline; }
 .crumbs .sep { color: var(--faint); margin: 0 4px; }
-.crumbs .here { color: var(--text); font-weight: 600; padding: 2px 4px; text-transform: capitalize; }
+.crumbs .here { color: var(--text); font-weight: 600; padding: 2px 4px; }
 .kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
 @media (max-width: 980px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
 .kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; box-shadow: var(--shadow); min-width: 0; }
@@ -254,3 +254,8 @@ body {
 .hi-bar.tall { height: 10px; margin-bottom: 6px; }
 .reasons { margin: 0 0 10px; padding-left: 18px; color: var(--muted); font-size: 13px; }
 .assump { margin-top: 12px; line-height: 1.5; }
+
+/* Keep wide content (JSON export, long evidence) inside its column */
+.grid > .col, .twin-row > .panel, .units > * { min-width: 0; }
+.json { max-width: 100%; }
+.evidence-txt, .tl-msg, .reasoning { overflow-wrap: anywhere; }

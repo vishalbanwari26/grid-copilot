@@ -17,6 +17,12 @@ const SUBSTATION_OF: Record<string, string> = {
   "TR-06": "Sandberg", "TR-07": "Kreuzweg", "TR-08": "Kreuzweg", "TR-09": "Lindenau",
 };
 
+const COMPONENT_LABEL: Record<string, string> = {
+  active_part: "Active part", oltc: "Tap changer", cooling: "Cooling", dga_monitor: "DGA monitor",
+  top_oil_pt100: "Top-oil sensor", oltc_temp: "Tap-changer temperature", pd_uhf: "PD sensor",
+  load_measurement: "Load measurement",
+};
+
 function fromUrl(): Place {
   const p = new URLSearchParams(window.location.search);
   const asset = p.get("asset");
@@ -55,7 +61,8 @@ export default function TwinApp() {
   if (place.level !== "grid") crumbs.push({ label: place.substation, place: { level: "substation", substation: place.substation } });
   if (place.level === "transformer" || place.level === "component")
     crumbs.push({ label: place.asset, place: { level: "transformer", substation: place.substation, asset: place.asset } });
-  if (place.level === "component") crumbs.push({ label: place.component.replace(/_/g, " "), place });
+  if (place.level === "component")
+    crumbs.push({ label: COMPONENT_LABEL[place.component] ?? place.component.replace(/_/g, " "), place });
 
   return (
     <>

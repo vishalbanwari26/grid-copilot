@@ -200,21 +200,27 @@ class Twin:
                         "mrid": mrid(asset, cid), "signals": list(c["signals"])})
         return out
 
-    def sensors(self, asset: str) -> list[dict]:
-        a = self._asset(asset)
-        q = self._quality(asset)
-        today = self.now.date()
-        # A reviewed "sensor fault" decision marks the sensor behind that alarm as
-        # untrusted: the twin keeps what a person established, not only what the
-        # automatic checks can see (a smooth drift passes them all).
+    def _condemned(self, asset: str) -> dict[str, str]:
+        """Channels a person has signed off as a sensor fault, with the reason.
+
+        A reviewed "sensor fault" decision marks the sensor behind that alarm as
+        untrusted: the twin keeps what a person established, not only what the
+        automatic checks can see (a smooth drift passes them all)."""
         rule_signal = {r.code: r.signal for r in RULES}
-        condemned = {}
+        condemned: dict[str, str] = {}
         if self.decisions is not None:
             for r in self.decisions.records():
                 if r.proposal["asset"] == asset and r.final_fault_class == "sensor_fault" and r.verdict != "defer":
                     sig = rule_signal.get(r.proposal["alarm"])
                     if sig:
                         condemned[sig] = f"sensor fault confirmed by {r.reviewer} on {r.decided_at[:10]}"
+        return condemned
+
+    def sensors(self, asset: str) -> list[dict]:
+        a = self._asset(asset)
+        q = self._quality(asset)
+        today = self.now.date()
+        condemned = self._condemned(asset)
         out = []
         for i, (sid, s) in enumerate(SENSORS.items()):
             grades = [q[c].grade for c in s["channels"] if c in q]
@@ -307,6 +313,7 @@ class Twin:
         else:
             raise KeyError(cid)
         step = 12
+        condemned = self._condemned(asset)
         series = {}
         for c in node["signals"]:
             vals = a.channels[c]
@@ -315,15 +322,18 @@ class Twin:
                          "label": SIGNALS[c].label, "unit": SIGNALS[c].unit, "ln": SIGNALS[c].iec61850_ln,
                          "kind": SIGNALS[c].kind, "grade": q[c].grade if c in q else "not_checked",
                          "reasons": q[c].reasons if c in q else []}
+            if c in condemned:
+                series[c]["grade"] = "untrusted"
+                series[c]["reasons"] = series[c]["reasons"] + [condemned[c]]
         extra = {}
         if cid == "oltc":
             lc = self.lifecycle(asset)
             extra = {k: lc[k] for k in ("oltc_ops_since_service", "oltc_service_interval_ops", "oltc_last_service",
                                         "oltc_ops_per_day", "oltc_service_due", "oltc_service_overdue")}
-            recent = a.tap_ops[-10:]
+            recent = sorted(a.tap_ops[-12:], key=lambda o: o.ts, reverse=True)[:10]
             extra["recent_operations"] = [{"ts": o.ts.isoformat(), "from": o.from_tap, "to": o.to_tap,
                                            "duration_s": o.duration_s, "motor_a": o.motor_peak_a,
-                                           "completed": o.completed} for o in reversed(recent)]
+                                           "completed": o.completed} for o in recent]
         alarms = [{"code": x.code, "ts": x.ts.isoformat(), "text": x.text}
                   for x in self.scenario.alarms.get(asset, []) if x.signal in node["signals"]]
         return {"asset": asset, "substation": a.plate.substation, "kind": kind, **node, "series": series,
