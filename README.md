@@ -86,6 +86,19 @@ and CIM class, and a decision exports as a document shaped like an Asset
 Administration Shell submodel. The mapping is at logical-node level and the
 export is not validated against the AAS metamodel.
 
+**An override stays with its asset; a repeated override becomes a review, not a
+rule.** When an engineer overrides the agent on one transformer, only that
+transformer's history changes. Local context (its history, sensor drift, its
+loading) is why a single correction should not rewrite how the whole fleet is
+judged. When the same correction shows up on three or more transformers (the
+agent proposed X, reviewers decided Y), `transformer/patterns.py` lists it as a
+fleet-level request naming the tools and prompt version involved. That request
+changes nothing on its own: a named reviewer approves it, rejects it, or keeps
+watching, with a reason, in a second hash-chained log. An approved change is
+made as a new tool or prompt version and evaluated like any other change. If
+more transformers show the same override after a review, the request says so.
+The design follows how an industrial APM product handles the same question.
+
 ### The digital twin: grid, substation, transformer, component
 
 The fleet sits inside an asset model with a dashboard at every level, and each

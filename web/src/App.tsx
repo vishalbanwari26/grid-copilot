@@ -2,14 +2,23 @@ import { useEffect, useState } from "react";
 import TwinApp from "./TwinApp";
 import OtDemo from "./OtDemo";
 import DecisionLogPanel from "./components/fleet/DecisionLogPanel";
-import { getDecisions, type DecisionLog } from "./fleetApi";
+import PatternsPanel from "./components/fleet/PatternsPanel";
+import { getDecisions, getPatterns, type DecisionLog, type PatternList } from "./fleetApi";
 
 function DecisionsView() {
   const [log, setLog] = useState<DecisionLog | null>(null);
+  const [patterns, setPatterns] = useState<PatternList | null>(null);
+  const loadPatterns = () => getPatterns().then(setPatterns);
   useEffect(() => {
     getDecisions().then(setLog);
+    loadPatterns();
   }, []);
-  return <DecisionLogPanel log={log} />;
+  return (
+    <>
+      <PatternsPanel list={patterns} onReviewed={loadPatterns} />
+      <DecisionLogPanel log={log} />
+    </>
+  );
 }
 
 const SUBTITLE: Record<string, string> = {

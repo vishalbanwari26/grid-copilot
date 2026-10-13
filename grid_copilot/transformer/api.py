@@ -6,15 +6,20 @@
 - POST /api/fleet/decision         a named reviewer accepts, overrides or defers a proposal
 - GET  /api/fleet/decisions        the decision log and whether its hash chain is intact
 - GET  /api/fleet/classes          fault classes, for the override form
+- GET  /api/fleet/patterns         overrides that repeat across transformers, with their review status
+- POST /api/fleet/patterns/review  a named reviewer approves, rejects or keeps watching a pattern
 
 The fleet is simulated once per process. Proposals live in memory until someone
-decides on them; decisions are appended to data/decisions.jsonl.
+decides on them; decisions are appended to data/decisions.jsonl. Pattern reviews
+are appended to data/pattern_reviews.jsonl and never change shared logic
+themselves. Set GRID_COPILOT_DATA to keep both logs somewhere else.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 from functools import lru_cache
 from pathlib import Path
@@ -30,6 +35,7 @@ from grid_copilot.transformer.decisions import DecisionLog, Proposal
 from grid_copilot.transformer.diagnostics import duval_triangle_1, gas_increment
 from grid_copilot.transformer.health import rank
 from grid_copilot.transformer.monitor import expected_top_oil_for
+from grid_copilot.transformer.patterns import MIN_ASSETS, PatternReviewLog, find_patterns
 from grid_copilot.transformer.rules import TransformerMockClient
 from grid_copilot.transformer.run import anomaly_from, build_investigator, default_history
 from grid_copilot.transformer.semantics import SIGNALS, decision_submodel, ref
@@ -37,7 +43,9 @@ from grid_copilot.transformer.sim import FAULT_CLASSES, GASES
 from grid_copilot.transformer.tools import TransformerContext
 
 router = APIRouter(prefix="/api/fleet")
-DECISIONS = DecisionLog(Path("data/decisions.jsonl"))
+DATA_DIR = Path(os.environ.get("GRID_COPILOT_DATA", "data"))
+DECISIONS = DecisionLog(DATA_DIR / "decisions.jsonl")
+PATTERN_REVIEWS = PatternReviewLog(DATA_DIR / "pattern_reviews.jsonl")
 _PROPOSALS: dict[str, Proposal] = {}
 
 
@@ -222,6 +230,35 @@ def submodel(decision_id: str) -> dict:
         if r.decision_id == decision_id:
             return decision_submodel(r.__dict__)
     raise HTTPException(404, "unknown decision")
+
+
+@router.get("/patterns")
+def patterns(min_assets: int = MIN_ASSETS) -> dict:
+    ok, why = PATTERN_REVIEWS.verify_chain()
+    found = find_patterns(DECISIONS.records(), min_assets=max(2, min_assets))
+    return {"min_assets": max(2, min_assets), "chain_ok": ok, "chain": why,
+            "patterns": [{**p.to_dict(), **PATTERN_REVIEWS.status(p)} for p in found]}
+
+
+class PatternReviewIn(BaseModel):
+    pattern_id: str
+    reviewer: str
+    verdict: str
+    reason: str = ""
+    min_assets: int = MIN_ASSETS
+
+
+@router.post("/patterns/review")
+def review_pattern(body: PatternReviewIn) -> dict:
+    found = {p.pattern_id: p for p in find_patterns(DECISIONS.records(), min_assets=max(2, body.min_assets))}
+    pattern = found.get(body.pattern_id)
+    if pattern is None:
+        raise HTTPException(404, "no such pattern in the current decision log")
+    try:
+        rec = PATTERN_REVIEWS.record(pattern, body.reviewer, body.verdict, body.reason)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"review": rec.__dict__}
 
 
 # --- digital twin ---------------------------------------------------------------

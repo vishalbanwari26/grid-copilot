@@ -94,6 +94,46 @@ export interface DecisionLog {
   records: DecisionRow[];
 }
 
+export interface OverridePattern {
+  pattern_id: string;
+  proposed: string;
+  final: string;
+  assets: string[];
+  n_assets: number;
+  reasons: string[];
+  tools_cited: string[];
+  prompt_versions: string[];
+  change_request: string;
+  first_at: string;
+  last_at: string;
+  status: string;
+  reviewer: string | null;
+  reason: string | null;
+  decided_at: string | null;
+  assets_at_review: number | null;
+  new_since_review: number;
+}
+
+export interface PatternList {
+  min_assets: number;
+  chain_ok: boolean;
+  chain: string;
+  patterns: OverridePattern[];
+}
+
+export const getPatterns = () => fetch("/api/fleet/patterns").then((r) => r.json() as Promise<PatternList>);
+
+export async function postPatternReview(body: { pattern_id: string; reviewer: string; verdict: string; reason: string }) {
+  const r = await fetch("/api/fleet/patterns/review", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.detail ?? "review failed");
+  return data;
+}
+
 export const getFleet = () => fetch("/api/fleet").then((r) => r.json() as Promise<Fleet>);
 export const getAsset = (a: string) => fetch(`/api/fleet/asset/${a}`).then((r) => r.json() as Promise<AssetDetail>);
 export const getClasses = () => fetch("/api/fleet/classes").then((r) => r.json() as Promise<string[]>);
