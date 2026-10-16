@@ -1,3 +1,5 @@
+import { apiGet, openStream, type Stream } from "./transport";
+
 export interface Fault {
   name: string;
   asset: string;
@@ -60,12 +62,12 @@ export interface EvalData {
   note: string;
 }
 
-export const getFaults = () => fetch("/api/faults").then((r) => r.json() as Promise<Fault[]>);
-export const getEval = () => fetch("/api/eval").then((r) => r.json() as Promise<EvalData>);
+export const getFaults = () => apiGet<Fault[]>("/api/faults");
+export const getEval = () => apiGet<EvalData>("/api/eval");
 export const getTelemetry = (fault: string) =>
-  fetch(`/api/telemetry?fault=${fault}`).then((r) => r.json() as Promise<Telemetry>);
+  apiGet<Telemetry>(`/api/telemetry?fault=${fault}`);
 
-/** Open the investigation SSE stream. Returns the EventSource so the caller can close it. */
+/** Open the investigation SSE stream. Returns the stream so the caller can close it. */
 export function streamInvestigation(
   fault: string,
   provider: string,
@@ -73,9 +75,9 @@ export function streamInvestigation(
   onReport: (r: Report) => void,
   onDone: (err?: string) => void,
   pace?: number,
-): EventSource {
+): Stream {
   const paceQ = pace === undefined ? "" : `&pace=${pace}`;
-  const es = new EventSource(`/api/investigate?fault=${fault}&provider=${provider}${paceQ}`);
+  const es = openStream(`/api/investigate?fault=${fault}&provider=${provider}${paceQ}`, pace);
   es.addEventListener("event", (m) => onEvent(JSON.parse((m as MessageEvent).data)));
   es.addEventListener("report", (m) => {
     onReport(JSON.parse((m as MessageEvent).data));

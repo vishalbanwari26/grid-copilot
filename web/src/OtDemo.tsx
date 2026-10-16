@@ -14,6 +14,7 @@ import TelemetryPanel from "./components/TelemetryPanel";
 import InvestigationTimeline from "./components/InvestigationTimeline";
 import ReportCard from "./components/ReportCard";
 import EvalPanel from "./components/EvalPanel";
+import { STATIC_DEMO, type Stream } from "./transport";
 
 export default function OtDemo() {
   const [faults, setFaults] = useState<Fault[]>([]);
@@ -23,9 +24,9 @@ export default function OtDemo() {
   const [events, setEvents] = useState<RCAEvent[]>([]);
   const [report, setReport] = useState<Report | null>(null);
   const [running, setRunning] = useState(false);
-  const [provider, setProvider] = useState("groq");
+  const [provider, setProvider] = useState(STATIC_DEMO ? "mock" : "groq");
   const [error, setError] = useState<string | null>(null);
-  const esRef = useRef<EventSource | null>(null);
+  const esRef = useRef<Stream | null>(null);
   const params = new URLSearchParams(window.location.search);
   const paceParam = params.has("pace") ? Number(params.get("pace")) : undefined;
 
@@ -86,7 +87,7 @@ export default function OtDemo() {
         </div>
         <div className="spacer" />
         <select className="select" value={provider} onChange={(e) => setProvider(e.target.value)} disabled={running}>
-          <option value="groq">live (groq)</option>
+          {!STATIC_DEMO && <option value="groq">live (groq)</option>}
           <option value="mock">offline (mock)</option>
         </select>
         <button className="btn" onClick={run} disabled={running || !telemetry}>

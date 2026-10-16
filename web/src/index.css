@@ -259,3 +259,9 @@ body {
 .grid > .col, .twin-row > .panel, .units > * { min-width: 0; }
 .json { max-width: 100%; }
 .evidence-txt, .tl-msg, .reasoning { overflow-wrap: anywhere; }
+
+.demo-banner {
+  margin-bottom: 16px; padding: 10px 14px; border-radius: 10px; font-size: 13px; line-height: 1.45;
+  background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.demo-banner a { color: var(--accent); }

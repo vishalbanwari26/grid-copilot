@@ -1,3 +1,5 @@
+import { apiGet } from "./transport";
+
 export interface UnitSummary {
   asset: string;
   substation: string;
@@ -142,11 +144,7 @@ export interface ComponentView {
   recent_operations?: { ts: string; from: number; to: number; duration_s: number; motor_a: number; completed: boolean }[];
 }
 
-const j = <T,>(u: string) =>
-  fetch(u).then((r) => {
-    if (!r.ok) throw new Error(`${r.status}`);
-    return r.json() as Promise<T>;
-  });
+const j = <T,>(u: string) => apiGet<T>(u);
 
 export const getGrid = () => j<GridView>("/api/twin/grid");
 export const getSubstation = (id: string) => j<SubstationView>(`/api/twin/substation/${encodeURIComponent(id)}`);

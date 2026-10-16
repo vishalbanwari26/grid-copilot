@@ -3,6 +3,7 @@ import type { RCAEvent } from "../../api";
 import { getClasses, streamFleetInvestigation, type Proposal } from "../../fleetApi";
 import InvestigationTimeline from "../InvestigationTimeline";
 import ProposalReview from "../fleet/ProposalReview";
+import { STATIC_DEMO, type Stream } from "../../transport";
 
 export default function InvestigatePanel({
   asset,
@@ -18,10 +19,10 @@ export default function InvestigatePanel({
   const [events, setEvents] = useState<RCAEvent[]>([]);
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [running, setRunning] = useState(false);
-  const [provider, setProvider] = useState(params.get("provider") ?? "groq");
+  const [provider, setProvider] = useState(STATIC_DEMO ? "mock" : params.get("provider") ?? "groq");
   const [error, setError] = useState<string | null>(null);
   const [classes, setClasses] = useState<string[]>([]);
-  const esRef = useRef<EventSource | null>(null);
+  const esRef = useRef<Stream | null>(null);
 
   useEffect(() => {
     getClasses().then(setClasses);
@@ -70,7 +71,7 @@ export default function InvestigatePanel({
         </div>
         <div className="spacer" />
         <select className="select" value={provider} onChange={(e) => setProvider(e.target.value)} disabled={running}>
-          <option value="groq">live (groq)</option>
+          {!STATIC_DEMO && <option value="groq">live (groq)</option>}
           <option value="mock">offline (rule-based mock)</option>
         </select>
         <button className="btn" onClick={run} disabled={running || !alarm}>

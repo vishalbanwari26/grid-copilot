@@ -1,3 +1,5 @@
+import { apiGet, apiPost, openStream, type Stream } from "./transport";
+
 import type { RCAEvent } from "./api";
 
 export interface SubScore {
@@ -121,24 +123,16 @@ export interface PatternList {
   patterns: OverridePattern[];
 }
 
-export const getPatterns = () => fetch("/api/fleet/patterns").then((r) => r.json() as Promise<PatternList>);
+export const getPatterns = () => apiGet<PatternList>("/api/fleet/patterns");
 
-export async function postPatternReview(body: { pattern_id: string; reviewer: string; verdict: string; reason: string }) {
-  const r = await fetch("/api/fleet/patterns/review", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.detail ?? "review failed");
-  return data;
-}
+export const postPatternReview = (body: { pattern_id: string; reviewer: string; verdict: string; reason: string }) =>
+  apiPost<{ review: unknown }>("/api/fleet/patterns/review", body);
 
-export const getFleet = () => fetch("/api/fleet").then((r) => r.json() as Promise<Fleet>);
-export const getAsset = (a: string) => fetch(`/api/fleet/asset/${a}`).then((r) => r.json() as Promise<AssetDetail>);
-export const getClasses = () => fetch("/api/fleet/classes").then((r) => r.json() as Promise<string[]>);
-export const getDecisions = () => fetch("/api/fleet/decisions").then((r) => r.json() as Promise<DecisionLog>);
-export const getSubmodel = (id: string) => fetch(`/api/fleet/decision/${id}/submodel`).then((r) => r.json());
+export const getFleet = () => apiGet<Fleet>("/api/fleet");
+export const getAsset = (a: string) => apiGet<AssetDetail>(`/api/fleet/asset/${a}`);
+export const getClasses = () => apiGet<string[]>("/api/fleet/classes");
+export const getDecisions = () => apiGet<DecisionLog>("/api/fleet/decisions");
+export const getSubmodel = (id: string) => apiGet<unknown>(`/api/fleet/decision/${id}/submodel`);
 
 export async function postDecision(body: {
   proposal_id: string;
@@ -147,14 +141,7 @@ export async function postDecision(body: {
   reason: string;
   final_fault_class?: string;
 }): Promise<{ record: { decision_id: string; hash: string; prev_hash: string }; submodel: unknown }> {
-  const r = await fetch("/api/fleet/decision", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.detail ?? "decision failed");
-  return data;
+  return apiPost("/api/fleet/decision", body);
 }
 
 export function streamFleetInvestigation(
@@ -164,9 +151,9 @@ export function streamFleetInvestigation(
   onProposal: (p: Proposal) => void,
   onDone: (err?: string) => void,
   pace?: number,
-): EventSource {
+): Stream {
   const paceQ = pace === undefined ? "" : `&pace=${pace}`;
-  const es = new EventSource(`/api/fleet/investigate?asset=${asset}&provider=${provider}${paceQ}`);
+  const es = openStream(`/api/fleet/investigate?asset=${asset}&provider=${provider}${paceQ}`, pace);
   es.addEventListener("event", (m) => onEvent(JSON.parse((m as MessageEvent).data)));
   es.addEventListener("proposal", (m) => {
     onProposal(JSON.parse((m as MessageEvent).data));

@@ -26,3 +26,6 @@ data/specs/*
 
 # OS
 .DS_Store
+
+# Recorded API responses for the static demo (scripts/record_demo.py)
+web/demo-data/

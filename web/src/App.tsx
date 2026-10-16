@@ -4,6 +4,7 @@ import OtDemo from "./OtDemo";
 import DecisionLogPanel from "./components/fleet/DecisionLogPanel";
 import PatternsPanel from "./components/fleet/PatternsPanel";
 import { getDecisions, getPatterns, type DecisionLog, type PatternList } from "./fleetApi";
+import { STATIC_DEMO } from "./transport";
 
 function DecisionsView() {
   const [log, setLog] = useState<DecisionLog | null>(null);
@@ -41,6 +42,13 @@ export default function App() {
   };
   return (
     <div className="app">
+      {STATIC_DEMO && (
+        <div className="demo-banner">
+          Recorded demo: investigations replay a real run of the offline mock agent, and the decisions you sign stay
+          in this browser. To run it live with a real model, see{" "}
+          <a href="https://github.com/vishalbanwari26/grid-copilot">github.com/vishalbanwari26/grid-copilot</a>.
+        </div>
+      )}
       <header className="header">
         <div className="brand">
           <div className="logo">
