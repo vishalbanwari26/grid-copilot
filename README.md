@@ -1,5 +1,7 @@
 # Grid Copilot
 
+**Live demo: [vishalbanwari.tech/grid-copilot](https://vishalbanwari.tech/grid-copilot/)** (a recorded run of the offline mock agent; investigations replay and the decisions you sign stay in your browser. Build it with `scripts/record_demo.py` and `scripts/build_pages.sh`.)
+
 Anomaly detection plus agentic root-cause analysis on industrial/grid telemetry.
 It ingests operational-technology (OT) time-series, detects an anomaly, then lets
 an agent investigate it, gathering evidence from the telemetry window, from
