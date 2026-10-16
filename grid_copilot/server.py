@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +30,7 @@ from grid_copilot.ingest.replay import replay
 from grid_copilot.ingest.synthetic import FAULTS, SyntheticGrid
 from grid_copilot.observability import LangfuseObservedClient, LangfuseEventListener, build_tracer
 from grid_copilot.telemetry import TelemetryLog
+from grid_copilot.transformer.api import forced_provider
 from grid_copilot.transformer.api import router as transformer_router
 from grid_copilot.transformer.api import twin_router
 from grid_copilot.types import Anomaly, IncidentReport
@@ -138,6 +141,7 @@ def telemetry(fault: str = "bearing_overheat") -> dict:
 
 
 def _build_llm(provider: str):
+    provider = forced_provider(provider)
     if provider == "mock":
         llm = GridMockClient()
     else:
@@ -235,3 +239,12 @@ def eval_results() -> dict:
         ],
         "note": "F1(adj) is point-adjusted (SWaT/WADI/HAI standard); F1(raw) is the stricter per-timestep score.",
     }
+
+
+# A hosted demo serves the built dashboard from the same origin as the API
+# (GRID_COPILOT_WEB=web/dist). Mounted last so every /api route matches first.
+_WEB = os.environ.get("GRID_COPILOT_WEB")
+if _WEB and Path(_WEB).is_dir():
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/", StaticFiles(directory=_WEB, html=True), name="web")

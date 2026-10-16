@@ -126,7 +126,14 @@ def classes() -> list[str]:
     return FAULT_CLASSES
 
 
+def forced_provider(provider: str) -> str:
+    """GRID_COPILOT_PROVIDER pins every investigation to one provider, so a
+    public demo can run the offline mock agent whatever the dashboard asks for."""
+    return os.environ.get("GRID_COPILOT_PROVIDER") or provider
+
+
 def _llm(provider: str):
+    provider = forced_provider(provider)
     if provider == "mock":
         return TransformerMockClient(), "mock (rule-based)"
     from grid_copilot.config import load_env
